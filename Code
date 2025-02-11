@@ -1,9 +1,10 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
+from tkinter import ttk, messagebox, simpledialog, filedialog
 import math
 from scipy.optimize import fsolve
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import numpy as np
 
 # Bolt constants for M6 and M8
 bolt_data = {
@@ -33,298 +34,352 @@ class BoltCalculator:
     def __init__(self, root):
         self.root = root
         self.mode = None
-        self.samples = None
-        self.angles = []
+        self.groups = None
+        self.group_data = []
         self.results = []
-        
+        self.stats = {}
+        self.overall_stats = {}
         self.setup_mode_selection()
-        
+
     def setup_mode_selection(self):
         self.mode_window = tk.Toplevel(self.root)
         self.mode_window.title("Calculation Mode")
-        self.mode_window.geometry("300x150")
-        
+        self.mode_window.geometry("300x200")
+
         tk.Label(self.mode_window, text="Select Calculation Mode:").pack(pady=10)
-        
-        ttk.Button(self.mode_window, text="Single Calculation", 
-                 command=lambda: self.set_mode("single")).pack(pady=5)
-        ttk.Button(self.mode_window, text="Group Calculation", 
-                 command=lambda: self.set_mode("group")).pack(pady=5)
-    
+
+        ttk.Button(self.mode_window, text="Single Calculation",
+                   command=lambda: self.set_mode("single")).pack(pady=5)
+        ttk.Button(self.mode_window, text="Group Test",
+                   command=lambda: self.set_mode("group")).pack(pady=5)
+        ttk.Button(self.mode_window, text="How It Works?",
+                   command=self.show_help_documentation).pack(pady=5)
+
+    def show_help_documentation(self):
+        doc_window = tk.Toplevel(self.root)
+        doc_window.title("Technical Documentation")
+        doc_window.geometry("800x600")
+
+        canvas = tk.Canvas(doc_window)
+        scrollbar = ttk.Scrollbar(doc_window, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+
+        content = """
+        Bolt Friction Calculator Technical Documentation
+
+        1. Single Calculation Mode
+        --------------------------
+        Calculates adjusted pretension force (F_adj) and coefficient of friction (μ) 
+        using initial (M1) and final torque (M2).
+
+        Formulas:
+        - Axial displacement: ΔL = (A * P) / 360
+        - Pretension force: F = (ΔL * S * E) / L
+        - Adjusted pretension: F_adj = F * (1 + M1/M2)
+        - Coefficient of friction: T = 0.5 * ds * F * tan (tan^-1 (P / (π * ds) + tan^-1 (μ / cos(30))) + 0.25 * (Dp + dp) * F * μ
+        which solves numerically
+
+        2. Group Test Mode
+        ------------------
+        - Enter group names and samples for each group
+        - Common torque values (M1 and M2) used for all samples
+        - Results displayed with statistical analysis
+        """
+
+        ttk.Label(scrollable_frame, text=content, wraplength=700, justify="left").pack(padx=10, pady=10)
+        scrollable_frame.update_idletasks()
+        canvas.config(scrollregion=canvas.bbox("all"))
+
     def set_mode(self, mode):
         self.mode = mode
         self.mode_window.destroy()
         self.setup_main_ui()
-        
-        if mode == "group":
-            self.get_sample_count()
-    
-    def get_sample_count(self):
-        self.samples = simpledialog.askinteger("Group Calculation", 
-                                             "Enter number of samples:", 
-                                             parent=self.root)
-        if not self.samples:
-            messagebox.showerror("Error", "Invalid sample count")
-            return
-            
-        self.get_angles()
-    
-    def get_angles(self):
-        self.angle_window = tk.Toplevel(self.root)
-        self.angle_window.title("Enter Angles")
-        
-        tk.Label(self.angle_window, text="Enter rotating angles (degrees):").pack(pady=5)
-        
-        self.angle_entries = []
-        for i in range(self.samples):
-            frame = tk.Frame(self.angle_window)
-            frame.pack(pady=2)
-            tk.Label(frame, text=f"Sample {i+1}:").pack(side=tk.LEFT)
-            entry = ttk.Entry(frame, width=10)
-            entry.pack(side=tk.LEFT)
-            self.angle_entries.append(entry)
-        
-        ttk.Button(self.angle_window, text="Calculate", 
-                 command=self.process_group_calculation).pack(pady=10)
-    
-    def process_group_calculation(self):
-        try:
-            self.angles = [float(entry.get()) for entry in self.angle_entries]
-            if len(self.angles) != self.samples:
-                raise ValueError
-        except ValueError:
-            messagebox.showerror("Error", "Invalid angle values")
-            return
-            
-        self.angle_window.destroy()
-        self.perform_group_calculation()
-    
-    def perform_group_calculation(self):
-        try:
-            bolt_type = self.bolt_type_var.get()
-            L = float(self.length_entry.get())
-            M = float(self.torque_entry.get())
-            E = float(self.young_modulus_entry.get()) * 1000
-        except ValueError:
-            messagebox.showerror("Error", "Invalid input values")
-            return
-            
-        bolt = bolt_data[bolt_type]
-        self.results = []
-        
-        for A in self.angles:
-            F = calculate_force(A, L, E, bolt)
-            mu = calculate_coefficient_of_friction(F, M, bolt)
-            self.results.append((A, F, mu))
-        
-        self.show_graphs()
-    
-    def show_graphs(self):
-        graph_window = tk.Toplevel(self.root)
-        graph_window.title("Results Visualization")
-        graph_window.geometry("1000x600")
-        
-        # Create main container
-        container = ttk.Frame(graph_window)
-        container.pack(fill=tk.BOTH, expand=True)
-        
-        # Figure for plots
-        fig = plt.figure(figsize=(10, 8))
-        self.ax1 = fig.add_subplot(211)
-        self.ax2 = fig.add_subplot(212)
-        
-        # Initial plotting with scatter
-        self.plot_lines = {'force': None, 'cof': None}  # To track line objects
-        self.update_plots(scatter_only=True)
-        
-        # Canvas for matplotlib
-        canvas = FigureCanvasTkAgg(fig, master=container)
-        canvas.draw()
-        canvas_widget = canvas.get_tk_widget()
-        canvas_widget.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
-        
-        # Results table
-        table_frame = ttk.Frame(container)
-        table_frame.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
-        
-        # Create treeview
-        self.results_table = ttk.Treeview(table_frame, columns=('Angle', 'Force', 'CoF'), show='headings')
-        vsb = ttk.Scrollbar(table_frame, orient="vertical", command=self.results_table.yview)
-        hsb = ttk.Scrollbar(table_frame, orient="horizontal", command=self.results_table.xview)
-        self.results_table.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-        
-        # Configure columns
-        self.results_table.heading('Angle', text='Angle (°)')
-        self.results_table.heading('Force', text='Force (N)')
-        self.results_table.heading('CoF', text='CoF (μ)')
-        
-        self.results_table.column('Angle', width=100, anchor='center')
-        self.results_table.column('Force', width=100, anchor='center')
-        self.results_table.column('CoF', width=100, anchor='center')
-        
-        # Populate table
-        for result in self.results:
-            self.results_table.insert('', 'end', values=(
-                f"{result[0]:.2f}",
-                f"{result[1]:,.2f}".replace(",", " "),
-                f"{result[2]:.4f}"
-            ))
-        
-        # Grid layout
-        self.results_table.grid(row=0, column=0, sticky="nsew")
-        vsb.grid(row=0, column=1, sticky="ns")
-        hsb.grid(row=1, column=0, sticky="ew")
-        
-        # Control buttons
-        control_frame = ttk.Frame(container)
-        control_frame.grid(row=1, column=0, columnspan=2, pady=10)
-        
-        ttk.Button(control_frame, text="Toggle Lines", 
-                 command=self.toggle_lines).pack(side=tk.LEFT, padx=5)
-        
-        # Configure grid weights
-        container.grid_columnconfigure(0, weight=3)
-        container.grid_columnconfigure(1, weight=1)
-        container.grid_rowconfigure(0, weight=1)
-        
-    def update_plots(self, scatter_only=True):
-        angles = [r[0] for r in self.results]
-        forces = [r[1] for r in self.results]
-        cofs = [r[2] for r in self.results]
-        
-        # Clear previous plots
-        self.ax1.clear()
-        self.ax2.clear()
-        
-        # Plot force
-        self.ax1.scatter(angles, forces, c='b', label='Pretension Force')
-        if not scatter_only and self.plot_lines['force']:
-            self.ax1.plot(angles, forces, 'b-', alpha=0.3)
-        
-        # Plot CoF
-        self.ax2.scatter(angles, cofs, c='r', label='Coefficient of Friction')
-        if not scatter_only and self.plot_lines['cof']:
-            self.ax2.plot(angles, cofs, 'r-', alpha=0.3)
-        
-        # Set titles and labels
-        self.ax1.set_title('Pretension Force vs Rotation Angle')
-        self.ax1.set_xlabel('Angle (degrees)')
-        self.ax1.set_ylabel('Force (N)')
-        self.ax1.grid(True)
-        
-        self.ax2.set_title('Coefficient of Friction vs Rotation Angle')
-        self.ax2.set_xlabel('Angle (degrees)')
-        self.ax2.set_ylabel('Coefficient of Friction')
-        self.ax2.grid(True)
-        
-        plt.tight_layout()
-    
-    def toggle_lines(self):
-        # Toggle line visibility
-        if self.plot_lines['force'] is None:
-            # Add lines
-            angles = [r[0] for r in self.results]
-            forces = [r[1] for r in self.results]
-            cofs = [r[2] for r in self.results]
-            
-            self.plot_lines['force'], = self.ax1.plot(angles, forces, 'b-', alpha=0.3)
-            self.plot_lines['cof'], = self.ax2.plot(angles, cofs, 'r-', alpha=0.3)
-        else:
-            # Remove lines
-            self.plot_lines['force'].remove()
-            self.plot_lines['cof'].remove()
-            self.plot_lines = {'force': None, 'cof': None}
-        
-        # Redraw canvas
-        self.ax1.figure.canvas.draw()
 
     def setup_main_ui(self):
-        # Main input fields
-        main_frame = tk.Frame(self.root)
-        main_frame.pack(pady=10)
-        
-        # Bolt type selection
-        self.bolt_type_var = tk.StringVar()
-        bolt_frame = tk.Frame(main_frame)
-        bolt_frame.pack(pady=5)
-        
-        tk.Label(bolt_frame, text="Bolt Type:").pack(side=tk.LEFT)
-        ttk.Radiobutton(bolt_frame, text="M6", variable=self.bolt_type_var, 
-                      value="M6").pack(side=tk.LEFT, padx=5)
-        ttk.Radiobutton(bolt_frame, text="M8", variable=self.bolt_type_var, 
-                      value="M8").pack(side=tk.LEFT, padx=5)
-        
-        # Common input fields
-        input_frame = tk.Frame(main_frame)
-        input_frame.pack(pady=10)
-        
-        tk.Label(input_frame, text="Bolt Length (L) [mm]:").grid(row=0, column=0, sticky=tk.W, pady=2)
-        self.length_entry = ttk.Entry(input_frame)
-        self.length_entry.grid(row=0, column=1, pady=2)
-        
-        tk.Label(input_frame, text="Applied Torque (M) [Nm]:").grid(row=1, column=0, sticky=tk.W, pady=2)
-        self.torque_entry = ttk.Entry(input_frame)
-        self.torque_entry.grid(row=1, column=1, pady=2)
-        
-        tk.Label(input_frame, text="Young's Modulus (E) [GPa]:").grid(row=2, column=0, sticky=tk.W, pady=2)
-        self.young_modulus_entry = ttk.Entry(input_frame)
-        self.young_modulus_entry.grid(row=2, column=1, pady=2)
-        
-        # Single calculation specific
+        self.main_window = tk.Toplevel(self.root)
+        self.main_window.title("Input Parameters")
+
+        self.bolt_type_var = tk.StringVar(value="M8")
+        ttk.Label(self.main_window, text="Bolt Type:").grid(row=0, column=0, padx=5, pady=5)
+        ttk.Radiobutton(self.main_window, text="M6", variable=self.bolt_type_var, value="M6").grid(row=0, column=1)
+        ttk.Radiobutton(self.main_window, text="M8", variable=self.bolt_type_var, value="M8").grid(row=0, column=2)
+
+        ttk.Label(self.main_window, text="Bolt Length (L) [mm]:").grid(row=1, column=0, padx=5, pady=5)
+        self.length_entry = ttk.Entry(self.main_window)
+        self.length_entry.grid(row=1, column=1, columnspan=2)
+
+        ttk.Label(self.main_window, text="Young's Modulus (E) [GPa]:").grid(row=2, column=0, padx=5, pady=5)
+        self.young_modulus_entry = ttk.Entry(self.main_window)
+        self.young_modulus_entry.grid(row=2, column=1, columnspan=2)
+
         if self.mode == "single":
-            tk.Label(input_frame, text="Rotating Angle (A) [degrees]:").grid(row=3, column=0, sticky=tk.W, pady=2)
-            self.angle_entry = ttk.Entry(input_frame)
-            self.angle_entry.grid(row=3, column=1, pady=2)
-            
-            ttk.Button(main_frame, text="Calculate", 
-                     command=self.perform_single_calculation).pack(pady=10)
-            
-            # Result labels
-            self.pretension_result_label = tk.Label(main_frame, text="", fg="blue")
-            self.pretension_result_label.pack(pady=5)
-            self.cof_result_label = tk.Label(main_frame, text="", fg="blue")
-            self.cof_result_label.pack(pady=5)
-    
-    def perform_single_calculation(self):
+            ttk.Label(self.main_window, text="Rotation Angle (A) [degrees]:").grid(row=3, column=0, padx=5, pady=5)
+            self.angle_entry = ttk.Entry(self.main_window)
+            self.angle_entry.grid(row=3, column=1, columnspan=2)
+
+        ttk.Label(self.main_window, text="Initial Torque (M1) [Nm]:").grid(row=4, column=0, padx=5, pady=5)
+        self.m1_entry = ttk.Entry(self.main_window)
+        self.m1_entry.grid(row=4, column=1, columnspan=2)
+
+        ttk.Label(self.main_window, text="Final Torque (M2) [Nm]:").grid(row=5, column=0, padx=5, pady=5)
+        self.m2_entry = ttk.Entry(self.main_window)
+        self.m2_entry.grid(row=5, column=1, columnspan=2)
+
+        ttk.Button(self.main_window, text="Calculate", command=self.validate_inputs).grid(row=6, column=0, columnspan=3, pady=10)
+
+    def validate_inputs(self):
         try:
-            A = float(self.angle_entry.get())
-            L = float(self.length_entry.get())
-            M = float(self.torque_entry.get())
-            E = float(self.young_modulus_entry.get()) * 1000
-            bolt_type = self.bolt_type_var.get()
+            self.L = float(self.length_entry.get())
+            self.E = float(self.young_modulus_entry.get()) * 1000  # Convert GPa to MPa
+            self.M1 = float(self.m1_entry.get())
+            self.M2 = float(self.m2_entry.get())
+            
+            if self.mode == "single":
+                self.A = float(self.angle_entry.get())
+                self.perform_single_calculation()
+            else:
+                self.get_group_count()
+
         except ValueError:
             messagebox.showerror("Error", "Invalid input values")
-            return
+
+    def get_group_count(self):
+        self.groups = simpledialog.askinteger("Group Count", "Enter number of groups:", parent=self.main_window)
+        if self.groups and self.groups > 0:
+            self.get_group_details()
+
+    def get_group_details(self):
+        for i in range(self.groups):
+            group_name = simpledialog.askstring(f"Group {i+1}", "Enter group name:", parent=self.main_window)
+            sample_count = simpledialog.askinteger(f"Samples in {group_name}", "Number of samples:", parent=self.main_window)
             
-        bolt = bolt_data[bolt_type]
+            angles = []
+            for j in range(sample_count):
+                angle = simpledialog.askfloat(f"Sample {j+1}", f"Rotation angle for {group_name}:", parent=self.main_window)
+                angles.append(angle)
+            
+            self.group_data.append((group_name, angles))
         
-        F = calculate_force(A, L, E, bolt)
-        mu = calculate_coefficient_of_friction(F, M, bolt)
+        self.perform_group_calculation()
+
+    def perform_single_calculation(self):
+        bolt = bolt_data[self.bolt_type_var.get()]
+        F = calculate_force(self.A, self.L, self.E, bolt)
+        adjusted_F = F * (1 + self.M1/self.M2)
+        mu = calculate_coefficient_of_friction(adjusted_F, self.M2 - self.M1, bolt)
         
-        self.pretension_result_label.config(text=f"Pretension Force (F): {F:.2f} N")
-        self.cof_result_label.config(text=f"Coefficient of Friction (μ): {mu:.4f}")
+        result_window = tk.Toplevel(self.root)
+        ttk.Label(result_window, text=f"Adjusted Pretension Force: {adjusted_F:.2f} N").pack(pady=5)
+        ttk.Label(result_window, text=f"Coefficient of Friction: {mu:.4f}").pack(pady=5)
+
+    def perform_group_calculation(self):
+        bolt = bolt_data[self.bolt_type_var.get()]
+        self.results = []
+        
+        for group_name, angles in self.group_data:
+            for angle in angles:
+                F = calculate_force(angle, self.L, self.E, bolt)
+                adjusted_F = F * (1 + self.M1/self.M2)
+                mu = calculate_coefficient_of_friction(adjusted_F, self.M2 - self.M1, bolt)
+                self.results.append((group_name, angle, adjusted_F, mu))
+        
+        self.show_group_results()
+    
+    def show_group_results(self):
+        result_window = tk.Toplevel(self.root)
+        result_window.title("Group Test Results")
+        result_window.geometry("1400x800")
+
+        # Pencereyi iki panele bölelim
+        paned = ttk.PanedWindow(result_window, orient=tk.HORIZONTAL)
+        paned.pack(fill=tk.BOTH, expand=True)
+
+        # Grafik paneli
+        plot_frame = ttk.Frame(paned)
+        paned.add(plot_frame, weight=3)
+
+        # Tablo paneli
+        table_frame = ttk.Frame(paned)
+        paned.add(table_frame, weight=2)
+
+        # Grafik oluşturma
+        fig = plt.figure(figsize=(10, 8))
+        ax1 = fig.add_subplot(211)
+        ax2 = fig.add_subplot(212)
+
+        groups = list(set([r[0] for r in self.results]))
+        x_positions = {group: i for i, group in enumerate(groups)}
+        x_vals, y_force, y_cof = [], [], []
+
+        for group, angle, force, mu in self.results:
+            x = x_positions[group] + np.random.normal(0, 0.05)
+            x_vals.append(x)
+            y_force.append(force)
+            y_cof.append(mu)
+
+        ax1.scatter(x_vals, y_force, alpha=0.5)
+        ax1.set_xticks(range(len(groups)))
+        ax1.set_xticklabels(groups)
+        ax1.set_title("Pretension Force by Group")
+        ax1.set_ylabel("Force (N)")
+
+        ax2.scatter(x_vals, y_cof, alpha=0.5)
+        ax2.set_xticks(range(len(groups)))
+        ax2.set_xticklabels(groups)
+        ax2.set_title("Coefficient of Friction by Group")
+        ax2.set_ylabel("Coefficient of Friction")
+
+        canvas = FigureCanvasTkAgg(fig, master=plot_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        # Tablo oluşturma
+        columns = ("Group", "Angle (°)", "Pretension (N)", "CoF (μ)")
+        tree = ttk.Treeview(table_frame, columns=columns, show="headings")
+        
+        # Scrollbar ekleme
+        vsb = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
+        hsb = ttk.Scrollbar(table_frame, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        tree.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
+
+        # Sütun başlıkları
+        for col in columns:
+            tree.heading(col, text=col)
+            tree.column(col, width=100)
+
+        # Verileri ve istatistikleri ekleme
+        current_group = None
+        group_data = {}
+        
+        # Grup istatistiklerini hesapla
+        for group, angle, force, mu in self.results:
+            if group not in group_data:
+                group_data[group] = {
+                    'angles': [],
+                    'forces': [],
+                    'cofs': []
+                }
+            group_data[group]['angles'].append(angle)
+            group_data[group]['forces'].append(force)
+            group_data[group]['cofs'].append(mu)
+            
+            tree.insert("", "end", values=(
+                group,
+                f"{angle:.2f}",
+                f"{force:.2f}",
+                f"{mu:.4f}"
+            ))
+
+        # Grup istatistiklerini ekle
+        for group in group_data:
+            # Ortalama
+            tree.insert("", "end", values=(
+                f"{group} - Avg",
+                f"{np.mean(group_data[group]['angles']):.2f}",
+                f"{np.mean(group_data[group]['forces']):.2f}",
+                f"{np.mean(group_data[group]['cofs']):.4f}"
+            ), tags=('stats',))
+            
+            # Max
+            tree.insert("", "end", values=(
+                f"{group} - Max",
+                f"{np.max(group_data[group]['angles']):.2f}",
+                f"{np.max(group_data[group]['forces']):.2f}",
+                f"{np.max(group_data[group]['cofs']):.4f}"
+            ), tags=('stats',))
+            
+            # Min
+            tree.insert("", "end", values=(
+                f"{group} - Min",
+                f"{np.min(group_data[group]['angles']):.2f}",
+                f"{np.min(group_data[group]['forces']):.2f}",
+                f"{np.min(group_data[group]['cofs']):.4f}"
+            ), tags=('stats',))
+
+        # Genel istatistikler
+        all_angles = [r[1] for r in self.results]
+        all_forces = [r[2] for r in self.results]
+        all_cofs = [r[3] for r in self.results]
+        
+        tree.insert("", "end", values=("Overall - Avg", 
+                     f"{np.mean(all_angles):.2f}", 
+                     f"{np.mean(all_forces):.2f}", 
+                     f"{np.mean(all_cofs):.4f}"), tags=('overall',))
+        tree.insert("", "end", values=("Overall - Max", 
+                     f"{np.max(all_angles):.2f}", 
+                     f"{np.max(all_forces):.2f}", 
+                     f"{np.max(all_cofs):.4f}"), tags=('overall',))
+        tree.insert("", "end", values=("Overall - Min", 
+                     f"{np.min(all_angles):.2f}", 
+                     f"{np.min(all_forces):.2f}", 
+                     f"{np.min(all_cofs):.4f}"), tags=('overall',))
+
+        # Stil ayarları
+        tree.tag_configure('stats', background='#f0f0f0')
+        tree.tag_configure('overall', background='#e0e0ff')
+
+        # Export butonu
+        ttk.Button(table_frame, text="Export Data", command=self.export_data).grid(row=2, column=0, columnspan=2, pady=10)
+
+    def export_data(self):
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+        )
+        if not file_path:
+            return
+
+        with open(file_path, 'w') as f:
+            # Başlık
+            f.write("Group,Angle (°),Pretension (N),CoF (μ)\n")
+            
+            # Veriler
+            for group, angle, force, mu in self.results:
+                f.write(f"{group},{angle:.2f},{force:.2f},{mu:.4f}\n")
+            
+            # İstatistikler
+            f.write("\nGroup Statistics\n")
+            groups = list(set([r[0] for r in self.results]))
+            for group in groups:
+                group_results = [r for r in self.results if r[0] == group]
+                angles = [r[1] for r in group_results]
+                forces = [r[2] for r in group_results]
+                cofs = [r[3] for r in group_results]
+                
+                f.write(f"{group} - Avg,,{np.mean(forces):.2f},{np.mean(cofs):.4f}\n")
+                f.write(f"{group} - Max,,{np.max(forces):.2f},{np.max(cofs):.4f}\n")
+                f.write(f"{group} - Min,,{np.min(forces):.2f},{np.min(cofs):.4f}\n")
+            
+            # Genel istatistikler
+            f.write("\nOverall Statistics\n")
+            all_forces = [r[2] for r in self.results]
+            all_cofs = [r[3] for r in self.results]
+            f.write(f"Overall - Avg,,{np.mean(all_forces):.2f},{np.mean(all_cofs):.4f}\n")
+            f.write(f"Overall - Max,,{np.max(all_forces):.2f},{np.max(all_cofs):.4f}\n")
+            f.write(f"Overall - Min,,{np.min(all_forces):.2f},{np.min(all_cofs):.4f}\n")
 
 def calculate_force(A, L, E, bolt):
     delta_L = (A * bolt["P"]) / 360
-    F = (delta_L * bolt["S"] * E) / L
-    return F
+    return (delta_L * bolt["S"] * E) / L
 
 def calculate_coefficient_of_friction(F, M, bolt):
     def equation(mu):
-        d2 = bolt["d2"]
-        tau = bolt["tau"]
-        dk = bolt["dk"]
-        term1 = (d2 / 2) * math.tan(tau + math.atan(1.155 * mu))
-        term2 = (mu * dk) / 2
+        term1 = (bolt["d2"]/2) * math.tan(bolt["tau"] + math.atan(1.155 * mu))
+        term2 = (mu * bolt["dk"]) / 2
         return M - F * (term1 + term2)
-    
-    mu_initial_guess = 0.4
-    mu_solution, = fsolve(equation, mu_initial_guess)
-    return mu_solution
+    return fsolve(equation, 0.4)[0]
 
 if __name__ == "__main__":
     root = tk.Tk()
-    root.title("Bolt Friction Calculator")
-    root.geometry("500x600")
+    root.withdraw()  # Hide the root window
     app = BoltCalculator(root)
     root.mainloop()
