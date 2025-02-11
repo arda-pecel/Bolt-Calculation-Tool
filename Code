@@ -5,6 +5,7 @@ from scipy.optimize import fsolve
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import numpy as np
+import csv
 
 # Bolt constants for M6 and M8
 bolt_data = {
@@ -148,43 +149,121 @@ class BoltCalculator:
         except ValueError:
             messagebox.showerror("Error", "Invalid input values")
 
+    def perform_single_calculation(self):
+        bolt = bolt_data[self.bolt_type_var.get()]
+        F = calculate_force(self.A, self.L, self.E, bolt)
+        adjusted_F = F * (1 + self.M1 / self.M2)
+        mu = calculate_coefficient_of_friction(adjusted_F, self.M2 - self.M1, bolt)
+        
+        result_window = tk.Toplevel(self.root)
+        result_window.title("Single Calculation Results")
+        result_window.geometry("400x200")
+
+        ttk.Label(result_window, text=f"Adjusted Pretension Force: {adjusted_F:.2f} N").pack(pady=10)
+        ttk.Label(result_window, text=f"Coefficient of Friction (μ): {mu:.4f}").pack(pady=10)
+
     def get_group_count(self):
         self.groups = simpledialog.askinteger("Group Count", "Enter number of groups:", parent=self.main_window)
         if self.groups and self.groups > 0:
             self.get_group_details()
 
     def get_group_details(self):
-        for i in range(self.groups):
-            group_name = simpledialog.askstring(f"Group {i+1}", "Enter group name:", parent=self.main_window)
-            sample_count = simpledialog.askinteger(f"Samples in {group_name}", "Number of samples:", parent=self.main_window)
-            
-            angles = []
-            for j in range(sample_count):
-                angle = simpledialog.askfloat(f"Sample {j+1}", f"Rotation angle for {group_name}:", parent=self.main_window)
-                angles.append(angle)
-            
-            self.group_data.append((group_name, angles))
-        
-        self.perform_group_calculation()
+        self.group_window = tk.Toplevel(self.main_window)
+        self.group_window.title("Group Input")
+        self.group_window.geometry("800x600")
 
-    def perform_single_calculation(self):
-        bolt = bolt_data[self.bolt_type_var.get()]
-        F = calculate_force(self.A, self.L, self.E, bolt)
-        adjusted_F = F * (1 + self.M1/self.M2)
-        mu = calculate_coefficient_of_friction(adjusted_F, self.M2 - self.M1, bolt)
-        
-        result_window = tk.Toplevel(self.root)
-        ttk.Label(result_window, text=f"Adjusted Pretension Force: {adjusted_F:.2f} N").pack(pady=5)
-        ttk.Label(result_window, text=f"Coefficient of Friction: {mu:.4f}").pack(pady=5)
+        # Container frame with scrollbar
+        container = ttk.Frame(self.group_window)
+        canvas = tk.Canvas(container)
+        scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+
+        # Input grid
+        ttk.Label(scrollable_frame, text="Group Name").grid(row=0, column=0, padx=5, pady=2)
+        ttk.Label(scrollable_frame, text="Sample Count").grid(row=0, column=1, padx=5, pady=2)
+        ttk.Label(scrollable_frame, text="Sample Angles (°)").grid(row=0, column=2, padx=5, pady=2)
+
+        self.group_entries = []
+        for i in range(self.groups):
+            group_name = ttk.Entry(scrollable_frame, width=20)
+            group_name.grid(row=i+1, column=0, padx=5, pady=2)
+            
+            sample_count = ttk.Entry(scrollable_frame, width=10)
+            sample_count.grid(row=i+1, column=1, padx=5, pady=2)
+            
+            angle_entries = []
+            angle_frame = ttk.Frame(scrollable_frame)
+            angle_frame.grid(row=i+1, column=2, padx=5, pady=2)
+            
+            self.group_entries.append((group_name, sample_count, angle_frame, angle_entries))
+
+        # Submit button
+        ttk.Button(scrollable_frame, text="Next", command=self.process_group_input).grid(row=self.groups+1, column=0, columnspan=3, pady=10)
+
+        # Pack container
+        container.pack(fill="both", expand=True)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+    def process_group_input(self):
+        try:
+            self.group_data = []
+            for group_entry, sample_count_entry, angle_frame, angle_entries in self.group_entries:
+                group_name = group_entry.get()
+                sample_count = int(sample_count_entry.get())
+                
+                if not group_name:
+                    raise ValueError("Group name cannot be empty")
+                if sample_count <= 0:
+                    raise ValueError("Sample count must be greater than 0")
+                
+                # Clear previous angle entries
+                for widget in angle_frame.winfo_children():
+                    widget.destroy()
+                
+                # Create new angle entries
+                for j in range(sample_count):
+                    ttk.Label(angle_frame, text=f"Sample {j+1}:").grid(row=j, column=0, padx=2, pady=2)
+                    angle_entry = ttk.Entry(angle_frame, width=10)
+                    angle_entry.grid(row=j, column=1, padx=2, pady=2)
+                    angle_entries.append(angle_entry)
+                
+                self.group_data.append((group_name, angle_entries))
+            
+            # Add final submit button
+            ttk.Button(self.group_window, text="Submit", command=self.collect_angles).pack(pady=10)
+
+        except ValueError as e:
+            messagebox.showerror("Input Error", f"Invalid input: {str(e)}")
+
+    def collect_angles(self):
+        try:
+            self.final_group_data = []
+            for group_name, angle_entries in self.group_data:
+                angles = []
+                for entry in angle_entries:
+                    angle = float(entry.get())
+                    angles.append(angle)
+                self.final_group_data.append((group_name, angles))
+            
+            self.group_window.destroy()
+            self.perform_group_calculation()
+
+        except ValueError as e:
+            messagebox.showerror("Input Error", f"Invalid angle value: {str(e)}")
 
     def perform_group_calculation(self):
         bolt = bolt_data[self.bolt_type_var.get()]
         self.results = []
         
-        for group_name, angles in self.group_data:
+        for group_name, angles in self.final_group_data:
             for angle in angles:
                 F = calculate_force(angle, self.L, self.E, bolt)
-                adjusted_F = F * (1 + self.M1/self.M2)
+                adjusted_F = F * (1 + self.M1 / self.M2)
                 mu = calculate_coefficient_of_friction(adjusted_F, self.M2 - self.M1, bolt)
                 self.results.append((group_name, angle, adjusted_F, mu))
         
