@@ -19,4 +19,11 @@
         - Enter group names and samples for each group
         - Common torque values (M1 and M2) used for all samples
         - Results displayed with statistical analysis
+
+
+        ![image](https://github.com/user-attachments/assets/0f44cbaa-4a50-4caf-acdc-1caa748eba57)
+
+        ![image](https://github.com/user-attachments/assets/4e63c50b-c500-4722-8467-f57b0f0c0a54)
+
+
     
