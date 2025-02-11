@@ -2,7 +2,7 @@
 
  Bolt Friction Calculator Technical Documentation
 
-        1. Single Calculation Mode
+  1. Single Calculation Mode
         --------------------------
         Calculates adjusted pretension force (F_adj) and coefficient of friction (μ) 
         using initial (M1) and final torque (M2).
